@@ -13,11 +13,11 @@ namespace ht {
 	constexpr double DEFAULT_MAX_LOAD_FACTOR = 0.8;
 	constexpr double DEFAULT_MIN_LOAD_FACTOR = DEFAULT_MAX_LOAD_FACTOR / 4;
 
-	constexpr size_t DEFAULT_INITIAL_CPTY = 2;
+	constexpr size_t DEFAULT_INITIAL_CPTY = 3;
 
-	// The smallest prime number greater than the number of characters 
-	// on the input alphabet (considering 2^8 as the input alphabet size)
-	constexpr size_t PRIME_GT_INPUT_ALPH = 257;
+	// Smallest prime number greater than the size of the 
+	// input alphabet (considering all UTF-8 character codes)
+	constexpr size_t PRIME_GT_ALPHABET_SIZE = 257;
 
 	template<typename Key, typename Value>
 	class HashTable {
@@ -67,7 +67,7 @@ namespace ht {
 			minLoadFactor(_minLoadFactor),
 			map(_capacity, nullptr),
 			customHashFn(_customHashFn)
-		{ 
+		{
 			if (capacity == 0) {
 				throw std::invalid_argument("The hash table capacity must not be 0");
 			}
@@ -105,12 +105,12 @@ namespace ht {
 			}
 		}
 		// Get upper limit defined for hash table load factor 
-		double getMaxLoadFactor() const { 
-			return maxLoadFactor; 
+		double getMaxLoadFactor() const {
+			return maxLoadFactor;
 		}
 		// Get lower limit defined for hash table load factor 
-		double getMinLoadFactor() const { 
-			return minLoadFactor; 
+		double getMinLoadFactor() const {
+			return minLoadFactor;
 		}
 
 		// Update map capacity with newCapacity and rehash
@@ -127,32 +127,25 @@ namespace ht {
 			// Transfer non-empty slots from the current map to temp
 			for (size_t i = 0; i < oldCapacity; i++) {
 				if (map[i]) {
-					Key k = map[i]->first;
-					size_t h = hash(k, capacity);
+					size_t h = hash(map[i]->first, capacity);
 
 					if (!temp[h]) {
 						temp[h] = map[i];
-						continue;
 					}
+					else {
+						size_t h2 = (h + 1) % capacity;
 
-					size_t p = capacity - 1;
-					while (!isPrime(p)) p--;
+						do {
+							if (!temp[h2]) {
+								temp[h2] = map[i];
+								break;
+							}
+							h2 = (h2 + 1) % capacity;
+						} while (h2 != h);
 
-					size_t h2 = p - hash(k, p);
-					size_t j = 1, probe;
-
-					do {
-						probe = (h + j * h2) % capacity;
-
-						if (!temp[probe]) {
-							temp[probe] = map[i];
-							break;
-						}
-						j++;
-					} while (j < capacity);
-
-					if (j == capacity) 
-						throw std::runtime_error("Error rehashing hash table.");
+						if (h2 == h)
+							throw std::exception("Error rehashing HashTable.");
+					}
 				}
 			}
 			// Swap the contents of the current map with the temporary map
@@ -172,29 +165,21 @@ namespace ht {
 				std::optional<Value> r = map[h]->second;
 				return r;
 			}
-
-			size_t p = capacity - 1;
-			if (p > 3)
-				while (!isPrime(p)) p--;
-
-			size_t h2 = p - hash(k, p);
-			size_t probe, i = 1;
+			size_t h2 = (h + 1) % capacity;
 
 			do {
-				probe = (h + i * h2) % capacity;
-
-				if (!map[probe]) {
+				if (!map[h2]) {
 					return std::nullopt; // Key not found
 				}
-				if (map[probe]->first == k) {
+				if (map[h2]->first == k) {
 					// Return slot value wrapped on a std::optional class object
-					std::optional<Value> r = map[probe]->second;
+					std::optional<Value> r = map[h2]->second;
 					return r;
 				}
-				i++;
-			} while (i < capacity);
+				h2 = (h2 + 1) % capacity;
+			} while (h2 != h);
 
-			return std::nullopt; // Key not found
+			return std::nullopt;
 		}
 
 		// Insert new (key, value) pair in the hash table
@@ -216,21 +201,12 @@ namespace ht {
 				// Don't insert duplicates
 				return false;
 
-			// Manage collision with double-hashing to avoid clustering
-			size_t p = capacity - 1;
-			// 'p' is the greatest prime number < capacity (or 1)
-			if (p > 3)
-				while (!isPrime(p)) p--;
-
-			size_t h2 = p - hash(k, p);
-			size_t probe, i = 1;
+			size_t h2 = (h + 1) % capacity;
 
 			do {
-				probe = (h + i * h2) % capacity;
-
-				if (!map[probe]) {
+				if (!map[h2]) {
 					// Insert new pair
-					map[probe] = std::make_shared<std::pair<Key, Value>>(k, v);
+					map[h2] = std::make_shared<std::pair<Key, Value>>(k, v);
 					size++;
 					// Check if load factor exceeded its limit and rehash if necessary
 					if (maxLoadFactorExceeded()) {
@@ -238,13 +214,14 @@ namespace ht {
 					}
 					return true; // Insertion done successfully
 				}
-				if (map[probe]->first == k)
+				if (map[h2]->first == k) {
 					// Don't insert duplicates
 					return false;
-				i++;
-			} while (i < capacity);
+				}
+				h2 = (h2 + 1) % capacity;
+			} while (h2 != h);
 
-			throw std::runtime_error("Error inserting item into hash table.");
+			throw std::exception("Error inserting value into HashTable.");
 		}
 
 		// Search for slot with key 'k' in the hash table and, if found, 
@@ -267,25 +244,17 @@ namespace ht {
 				}
 				return r; // Return removed slot value
 			}
-
-			size_t p = capacity - 1;
-			if (p > 3)
-				while (!isPrime(p)) p--;
-
-			size_t h2 = p - hash(k, p);
-			size_t probe, i = 1;
+			size_t h2 = (h + 1) & capacity;
 
 			do {
-				probe = (h + i * h2) % capacity;
-
-				if (!map[probe]) {
+				if (!map[h2]) {
 					return std::nullopt; // Key not found
 				}
-				if (map[probe]->first == k) {
+				if (map[h2]->first == k) {
 					// Return value wrapped on a std::optional class object
-					std::optional<Value> r = map[probe]->second;
+					std::optional<Value> r = map[h2]->second;
 					// Empty slot
-					map[probe].reset();
+					map[h2].reset();
 					size--;
 					// Check if load factor exceeded its limit and rehash if necessary
 					if (minLoadFactorExceeded() && capacity > 1) {
@@ -293,15 +262,25 @@ namespace ht {
 					}
 					return r; // Return removed slot value
 				}
-				i++;
-			} while (i < capacity);
+				h2 = (h2 + 1) % capacity;
+			} while (h2 != h);
 
-			return std::nullopt; // Key not found
+			return std::nullopt;
+		}
+
+		std::vector<Value> getAll() const {
+			std::vector<Value> result;
+
+			for (Slot_t slot : map) {
+				if (slot)
+					result.emplace_back(slot->second);
+			}
+			return result;
 		}
 
 		// Check if the hash table is empty
-		bool isEmpty() const { 
-			return size == 0; 
+		bool isEmpty() const {
+			return size == 0;
 		}
 
 	private:
@@ -353,18 +332,18 @@ namespace ht {
 					primePow = (primePow * PRIME_GT_INPUT_ALPH) % range;
 				}
 				return hashCode;
-			};
+				};
 			// Calculate hash code using the selected hash function
 			return hashFn(k) % range;
 		}
 
 		// Check if the load factor has reached its maximum value
-		bool maxLoadFactorExceeded() const { 
-			return (static_cast<double>(size) / capacity) > maxLoadFactor; 
+		bool maxLoadFactorExceeded() const {
+			return (static_cast<double>(size) / capacity) >= maxLoadFactor;
 		}
 		// Check if the load factor has reached its minimum value
-		bool minLoadFactorExceeded() const { 
-			return (static_cast<double>(size) / capacity) < minLoadFactor; 
+		bool minLoadFactorExceeded() const {
+			return (static_cast<double>(size) / capacity) < minLoadFactor;
 		}
 	};
 }
