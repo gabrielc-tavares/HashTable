@@ -8,6 +8,8 @@
 #include <optional>
 #include <functional>
 #include <type_traits>
+#include <stdexcept>
+#include <format>
 
 namespace ht {
 	// Default upper limit for the HashTable load factor 
@@ -17,20 +19,50 @@ namespace ht {
 	// Minimum capacity allowed for the HashTable
 	constexpr size_t MIN_CPTY = 2;
 
+	class HashTableException : public std::runtime_error {
+	public:
+		HashTableException(const std::string& message)
+			: std::runtime_error(message) {}
+	};
+
+	class InvalidLoadFactors : public HashTableException {
+	public:
+		InvalidLoadFactors(double min, double max)
+			: HashTableException(std::format("Invalid load factors: min = {}, max = {}.", min, max)) {}
+	};
+
+	class InvalidCapacity : public HashTableException {
+	public:
+		InvalidCapacity(size_t newCapacity)
+			: HashTableException(std::format("Couldn't rehash with newCapacity = {} (minimum capacity is {})", newCapacity, MIN_CPTY)) {}
+
+		InvalidCapacity(size_t newCapacity, size_t currentSize)
+			: HashTableException(std::format("Couldn't rehash with newCapacity = {} (current HashTable size is {})", newCapacity, currentSize)) {}
+	};
+
+	class ResizeFailed : public HashTableException {
+	public:
+		ResizeFailed()
+			: HashTableException("Failed to resize HashTable") {}
+	};
+
+	class InsertionFailed : public HashTableException {
+	public:
+		InsertionFailed()
+			: HashTableException("Failed to insert an item in HashTable") {}
+	};
+
 	template<typename Key, typename Value>
 	class HashTable {
 	public:
-		// Pointer to a (key, value) pair
-		using Slot_t = std::shared_ptr<std::pair<Key, Value>>;
-		// Collection of slots
-		using Map_t = std::vector<Slot_t>;
-		// Hash function interface
-		using HashFunction = std::function<size_t(const Key&)>;
+		using Slot_t = std::shared_ptr<std::pair<Key, Value>>;  // Pointer to a (key, value) pair
+		using Map_t = std::vector<Slot_t>;  // Collection of slots
+		using HashFunction = std::function<size_t(const Key&)>;  // Hash function interface
 
 		HashTable(HashFunction customFn = nullptr, size_t initialCapacity = MIN_CPTY, double minLoadFactor = MIN_LOAD_FACTOR, double maxLoadFactor = MAX_LOAD_FACTOR)
 			: _size(0), _customHashFn(customFn), _capacity(initialCapacity), _minLoadFactor(minLoadFactor), _maxLoadFactor(maxLoadFactor) {
 			if (_capacity < MIN_CPTY) 
-				throw std::invalid_argument("Invalid initial capacity.");
+				throw InvalidCapacity(_capacity);
 			if (_customHashFn == nullptr)
 				if (!(std::is_fundamental_v<Key> || std::is_pointer_v<Key> || std::is_array_v<Key>))
 					throw std::invalid_argument("The default hash function accepts only contiguously allocated keys.");
@@ -43,17 +75,17 @@ namespace ht {
 
 		// Set upper and lower thresholds to the load factor
 		void setLoadFactors(double max, double min) {
-			if (min <= 0.0 || min > 1.0 || max <= 0.0 || max > 1.0 || max <= min) {
-				throw std::invalid_argument("Invalid load factors.");
-			}
+			if (min <= 0.0 || min > 1.0 || max <= 0.0 || max > 1.0 || max <= min)
+				throw InvalidLoadFactors(min, max);
+			
 			_minLoadFactor = min;
 			_maxLoadFactor = max;
 
 			if (maxLoadFactorExceeded()) {
-				rehash(2 * _capacity);
+				resize(2 * _capacity);
 			}
 			else if (minLoadFactorExceeded()) {
-				rehash((size_t)ceil(_capacity / 2.0));
+				resize((size_t)ceil(_capacity / 2.0));
 			}
 		}
 
@@ -67,10 +99,13 @@ namespace ht {
 			return _minLoadFactor;
 		}
 
-		// Update map capacity with newCapacity and rehash
-		void rehash(size_t newCapacity) {
+		// Modify HashTable capacity
+		void resize(size_t newCapacity) {
 			if (newCapacity < _size) {
-				throw std::invalid_argument("The HashTable capacity shouldn't be smaller than its size.");
+				throw InvalidCapacity(newCapacity, _size);
+			}
+			if (newCapacity < MIN_CPTY) {
+				throw InvalidCapacity(newCapacity);
 			}
 			size_t oldCapacity = _capacity;
 			_capacity = newCapacity;
@@ -100,16 +135,35 @@ namespace ht {
 					} while (h2 != h);
 
 					if (h2 == h)
-						throw std::exception("Error: HashTable could not be resized.");
+						throw ResizeFailed();
 				}
 			}
 			// Swap the contents of the current map with the temporary map
 			map.swap(temp);
 		}
 
+		// Check if HashTable contains item with key 'k'
+		bool contains(const Key& k) const {
+			size_t h = hash(k, _capacity);
+
+			if (!map[h]) return false;
+			if (map[h]->first == k) return true;
+
+			// Probe through HashTable searching for the required item
+			size_t h2 = (h + 1) % _capacity;
+
+			do {
+				if (!map[h2]) return false;
+				if (map[h2]->first == k) return true;
+				h2 = (h2 + 1) % _capacity;
+			} while (h2 != h);
+
+			return false;
+		}
+
 		// Search for item with key 'k' in the HashTable
 		// If found, its value is returned; otherwise, a std::nullopt is returned
-		std::optional<Value> search(const Key& k) const {
+		std::optional<Value> getValue(const Key& k) const {
 			size_t h = hash(k, _capacity);
 
 			if (!map[h]) {
@@ -137,6 +191,36 @@ namespace ht {
 			return std::nullopt;
 		}
 
+		// Search for item with key 'k' in the HashTable
+		// If found, the item is returned; otherwise, a std::nullopt is returned
+		std::optional<std::pair<Key, Value>> getItem(const Key& k) const {
+			size_t h = hash(k, _capacity);
+
+			if (!map[h]) {
+				return std::nullopt; // Key not found
+			}
+			if (map[h]->first == k) {
+				// Return slot value wrapped on a std::optional class object
+				std::optional<std::pair<Key, Value>> r = *map[h];
+				return r;
+			}
+			// Probe through HashTable searching for the required item
+			size_t h2 = (h + 1) % _capacity;
+
+			do {
+				if (!map[h2]) {
+					return std::nullopt;
+				}
+				if (map[h2]->first == k) {
+					std::optional<std::pair<Key, Value>> r = *map[h];
+					return r;
+				}
+				h2 = (h2 + 1) % _capacity;
+			} while (h2 != h);
+
+			return std::nullopt;
+		}
+
 		// Insert new item in the HashTable
 		// Returns true if insertion was effectively done; otherwise, returns false
 		bool insert(const Key& k, const Value& v) {
@@ -148,7 +232,7 @@ namespace ht {
 				_size++;
 				// Check if load factor exceeded its limit and rehash if necessary
 				if (maxLoadFactorExceeded()) {
-					rehash(2 * _capacity);
+					resize(2 * _capacity);
 				}
 				return true; // Insertion done successfully
 			}
@@ -165,7 +249,7 @@ namespace ht {
 					map[h2] = std::make_shared<std::pair<Key, Value>>(k, v);
 					_size++;
 					if (maxLoadFactorExceeded()) {
-						rehash(2 * _capacity);
+						resize(2 * _capacity);
 					}
 					return true; 
 				}
@@ -175,7 +259,7 @@ namespace ht {
 				h2 = (h2 + 1) % _capacity;
 			} while (h2 != h);
 
-			throw std::exception("Error: item could not be inserted in HashTable.");
+			throw InsertionFailed();
 		}
 
 		// Search for slot with key 'k' in the HashTable and, if found, remove it 
@@ -194,7 +278,7 @@ namespace ht {
 				_size--;
 				// Check if load factor exceeded its limit and rehash if necessary
 				if (minLoadFactorExceeded() && _capacity > 1) {
-					rehash((size_t)ceil(_capacity / 2.0));
+					resize((size_t)ceil(_capacity / 2.0));
 				}
 				return r; // Return removed slot value
 			}
@@ -210,7 +294,7 @@ namespace ht {
 					map[h2].reset();
 					_size--;
 					if (minLoadFactorExceeded() && _capacity > 1) {
-						rehash((size_t)ceil(_capacity / 2.0));
+						resize((size_t)ceil(_capacity / 2.0));
 					}
 					return r; 
 				}
@@ -234,6 +318,15 @@ namespace ht {
 		// Check if the hash table is empty
 		bool isEmpty() const {
 			return _size == 0;
+		}
+
+		// Overload the [] operator for key-based lookup and insertion
+		template <typename T = Value>
+		typename std::enable_if<std::is_default_constructible<T>::value, T&>::type operator[](const Key& key) {
+			if (contains(key))
+				return getValue(key).value();
+			insert(key, T()); // Default-construct a value of type T
+			return getValue(key).value();
 		}
 
 	private:
@@ -270,28 +363,24 @@ namespace ht {
 			// Use the custom hash function if provided; otherwise, use the default hash function
 			auto hashFn = _customHashFn ? _customHashFn : [this, range](const Key& k) -> size_t {
 				// 'ptr' points to the memory representation of 'k'
-				const char* ptr = nullptr;
-				ptr = reinterpret_cast<const char*>(&k);
+				const char* bytes = reinterpret_cast<const char*>(&k);
 
-				if (!ptr) {
+				if (!bytes) 
 					throw std::runtime_error("Invalid key type for default hash function.");
-				}
-				// Assuming the input alphabet can contain all UTF-8 characters
-				static const uint16_t alphabetSize = UCHAR_MAX + 1;
-				// Some prime number greater than the input alphabet size
-				static const uint16_t somePrime = alphabetSize + 1;
 
 				const size_t blockSize = sizeof(k);
-				size_t primePow = somePrime;
+
+				size_t p = 257;  // Smallest prime number greater than the alphabet size
+				size_t primePow = p;
 				size_t hashCode = 0;
 
 				// Treat 'k' as a byte string and apply polynomial rolling hash
 				for (size_t i = 0; i < blockSize; i++) {
-					hashCode = (hashCode + (static_cast<size_t>(*(ptr + i)) + 1) * primePow) % range;
-					primePow = (primePow * somePrime) % range;
+					hashCode = (hashCode + (static_cast<size_t>(*(bytes + i)) + 1) * primePow) % range;
+					primePow = (primePow * p) % range;
 				}
 				return hashCode;
-				};
+			};
 			// Calculate hash code using the selected hash function
 			return hashFn(k) % range;
 		}
