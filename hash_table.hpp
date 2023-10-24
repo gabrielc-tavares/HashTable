@@ -12,12 +12,9 @@
 #include <format>
 
 namespace ht {
-	// Default upper limit for the HashTable load factor 
-	constexpr double MAX_LOAD_FACTOR = 0.8;
-	// Default lower limit for the HashTable load factor 
-	constexpr double MIN_LOAD_FACTOR = MAX_LOAD_FACTOR / 4;
-	// Minimum capacity allowed for the HashTable
-	constexpr size_t MIN_CPTY = 2;
+	constexpr double MAX_LOAD_FACTOR = 0.8;  // Default upper limit for load factor 
+	constexpr double MIN_LOAD_FACTOR = MAX_LOAD_FACTOR / 4;  // Default lower limit for load factor
+	constexpr size_t MIN_CPTY = 2;  // Minimum capacity allowed for the HashTable
 
 	class HashTableException : public std::runtime_error {
 	public:
@@ -73,28 +70,27 @@ namespace ht {
 		HashTable(const HashTable<Key, Value>& obj) 
 			: _size(obj._size), _customHashFn(obj._customHashFn), _capacity(obj._capacity), _minLoadFactor(obj._minLoadFactor), _maxLoadFactor(obj._maxLoadFactor), map(obj.map.begin(), obj.map.end()) {}
 
-		// Set upper and lower thresholds to the load factor
+		// Set upper and lower limits to the load factor
 		void setLoadFactors(double max, double min) {
-			if (min <= 0.0 || min > 1.0 || max <= 0.0 || max > 1.0 || max <= min)
+			if (min <= 0.0 || min > 1.0 || max <= 0.0 || max > 1.0 || max <= min) {
 				throw InvalidLoadFactors(min, max);
-			
+			}
 			_minLoadFactor = min;
 			_maxLoadFactor = max;
 
 			if (maxLoadFactorExceeded()) {
 				resize(2 * _capacity);
-			}
-			else if (minLoadFactorExceeded()) {
+			} else if (minLoadFactorExceeded()) {
 				resize((size_t)ceil(_capacity / 2.0));
 			}
 		}
 
-		// Get upper limit defined for hash table load factor 
+		// Get upper limit defined for the HashTable load factor 
 		double getMaxLoadFactor() const {
 			return _maxLoadFactor;
 		}
 
-		// Get lower limit defined for hash table load factor 
+		// Get lower limit defined for the HashTable load factor 
 		double getMinLoadFactor() const {
 			return _minLoadFactor;
 		}
@@ -103,8 +99,7 @@ namespace ht {
 		void resize(size_t newCapacity) {
 			if (newCapacity < _size) {
 				throw InvalidCapacity(newCapacity, _size);
-			}
-			if (newCapacity < MIN_CPTY) {
+			} else if (newCapacity < MIN_CPTY) {
 				throw InvalidCapacity(newCapacity);
 			}
 			size_t oldCapacity = _capacity;
@@ -125,7 +120,6 @@ namespace ht {
 					// A collision has occurred. Try to insert in another place
 					// using linear probing
 					size_t h2 = (h + 1) % _capacity;
-
 					do {
 						if (!temp[h2]) {
 							temp[h2] = map[i];
@@ -134,15 +128,16 @@ namespace ht {
 						h2 = (h2 + 1) % _capacity;
 					} while (h2 != h);
 
-					if (h2 == h)
+					if (h2 == h) {
 						throw ResizeFailed();
+					}
 				}
 			}
 			// Swap the contents of the current map with the temporary map
 			map.swap(temp);
 		}
 
-		// Check if HashTable contains item with key 'k'
+		// Check if the HashTable contains an item with key 'k'
 		bool contains(const Key& k) const {
 			size_t h = hash(k, _capacity);
 
@@ -151,7 +146,6 @@ namespace ht {
 
 			// Probe through HashTable searching for the required item
 			size_t h2 = (h + 1) % _capacity;
-
 			do {
 				if (!map[h2]) return false;
 				if (map[h2]->first == k) return true;
@@ -168,8 +162,7 @@ namespace ht {
 
 			if (!map[h]) {
 				return std::nullopt; // Key not found
-			}
-			if (map[h]->first == k) {
+			} else if (map[h]->first == k) {
 				// Return slot value wrapped on a std::optional class object
 				std::optional<Value> r = map[h]->second;
 				return r;
@@ -180,8 +173,7 @@ namespace ht {
 			do {
 				if (!map[h2]) {
 					return std::nullopt;
-				}
-				if (map[h2]->first == k) {
+				} else if (map[h2]->first == k) {
 					std::optional<Value> r = map[h2]->second;
 					return r;
 				}
@@ -198,8 +190,7 @@ namespace ht {
 
 			if (!map[h]) {
 				return std::nullopt; // Key not found
-			}
-			if (map[h]->first == k) {
+			} else if (map[h]->first == k) {
 				// Return slot value wrapped on a std::optional class object
 				std::optional<std::pair<Key, Value>> r = *map[h];
 				return r;
@@ -210,8 +201,7 @@ namespace ht {
 			do {
 				if (!map[h2]) {
 					return std::nullopt;
-				}
-				if (map[h2]->first == k) {
+				} else if (map[h2]->first == k) {
 					std::optional<std::pair<Key, Value>> r = *map[h];
 					return r;
 				}
@@ -235,10 +225,10 @@ namespace ht {
 					resize(2 * _capacity);
 				}
 				return true; // Insertion done successfully
-			}
-			if (map[h]->first == k)
+			} else if (map[h]->first == k) {
 				// Don't insert duplicates
 				return false;
+			}
 
 			// A collision has occurred. Try to insert in another place
 			// using linear probing
@@ -252,8 +242,7 @@ namespace ht {
 						resize(2 * _capacity);
 					}
 					return true; 
-				}
-				if (map[h2]->first == k) {
+				} else if (map[h2]->first == k) {
 					return false;
 				}
 				h2 = (h2 + 1) % _capacity;
@@ -269,8 +258,7 @@ namespace ht {
 
 			if (!map[h]) {
 				return std::nullopt; // Key not found
-			}
-			if (map[h]->first == k) {
+			} else if (map[h]->first == k) {
 				// Return value wrapped on a std::optional class object
 				std::optional<Value> r = map[h]->second;
 				// Empty slot
@@ -288,8 +276,7 @@ namespace ht {
 			do {
 				if (!map[h2]) {
 					return std::nullopt;
-				}
-				if (map[h2]->first == k) {
+				} else if (map[h2]->first == k) {
 					std::optional<Value> r = map[h2]->second;
 					map[h2].reset();
 					_size--;
@@ -364,10 +351,9 @@ namespace ht {
 			auto hashFn = _customHashFn ? _customHashFn : [this, range](const Key& k) -> size_t {
 				// 'ptr' points to the memory representation of 'k'
 				const char* bytes = reinterpret_cast<const char*>(&k);
-
-				if (!bytes) 
+				if (!bytes) {
 					throw std::runtime_error("Invalid key type for default hash function.");
-
+				}
 				const size_t blockSize = sizeof(k);
 
 				size_t p = 257;  // Smallest prime number greater than the alphabet size
