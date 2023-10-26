@@ -12,12 +12,14 @@
 #include <format>
 
 namespace ht {
-	constexpr double MAX_LOAD_FACTOR = 0.8;  // Default maximum load factor 
-	constexpr double MIN_LOAD_FACTOR = 0.2;  // Default minimum load factor
+	constexpr double MAX_LOAD_FACTOR = 0.75;  // Default maximum load factor 
+	constexpr double MIN_LOAD_FACTOR = 0.25;  // Default minimum load factor
+	constexpr int NBHD_SIZE = 32;  // Size of bucket neighborhoods (referred to as "H" in the original paper on Hopscotch Hashing)
+	constexpr int INITIAL_CPTY = NBHD_SIZE;  // Initial hash table capacity
 
 	class HashTableException : public std::runtime_error {
 	public:
-		HashTableException(const std::string& message)
+		HashTableException(const std::string& message) 
 			: std::runtime_error(message) {}
 	};
 
@@ -30,25 +32,29 @@ namespace ht {
 	class ResizeFailed : public HashTableException {
 	public:
 		ResizeFailed()
-			: HashTableException("Failed to resize HashTable") {}
+			: HashTableException("Failed to resize hash table") {}
 	};
 
 	class InsertionFailed : public HashTableException {
 	public:
 		InsertionFailed()
-			: HashTableException("Failed to insert an item in HashTable") {}
+			: HashTableException("Failed to insert an item in hash table") {}
 	};
 
 	template<typename Key, typename Value>
 	class HashTable {
 	public:
-		using Slot_t = std::shared_ptr<std::pair<Key, Value>>;  // Pointer to a (key, value) pair
-		using Map_t = std::vector<Slot_t>;  // Collection of slots
-		using HashFunction = std::function<size_t(const Key&)>;  // Hash function interface
+		using HashFunction = std::function<size_t(const Key&)>;  // Custom hash function interface
 
-		HashTable(HashFunction customHashFn = nullptr, double minLoadFactor = MIN_LOAD_FACTOR, double maxLoadFactor = MAX_LOAD_FACTOR, size_t capacity = 1)
-			: _size(0), _customHashFn(customHashFn), _capacity(capacity), _minLoadFactor(minLoadFactor), _maxLoadFactor(maxLoadFactor) {
-			map.resize(_capacity);
+		HashTable(HashFunction _customHashFn = nullptr, double _minLoadFactor = MIN_LOAD_FACTOR, double _maxLoadFactor = MAX_LOAD_FACTOR, size_t expectedSize = INITIAL_CPTY)
+			: size(0), customHashFn(_customHashFn), minLoadFactor(_minLoadFactor), maxLoadFactor(_maxLoadFactor) {
+			if (expectedSize < INITIAL_CPTY) {
+				capacity = INITIAL_CPTY;
+			} else {
+				capacity = expectedSize;
+			}
+			table.resize(capacity);
+
 			if (_customHashFn == nullptr && !(std::is_fundamental_v<Key> || std::is_pointer_v<Key> || std::is_array_v<Key>)) {
 				throw std::exception("The default hash function accepts only contiguously allocated keys.");
 			}
@@ -56,203 +62,181 @@ namespace ht {
 
 		// Copy constructor
 		HashTable(const HashTable<Key, Value>& obj) 
-			: _size(obj._size), _customHashFn(obj._customHashFn), _capacity(obj._capacity), _minLoadFactor(obj._minLoadFactor), _maxLoadFactor(obj._maxLoadFactor), map(obj.map.begin(), obj.map.end()) {}
+			: size(obj.size), customHashFn(obj.customHashFn), capacity(obj.capacity), minLoadFactor(obj.minLoadFactor), maxLoadFactor(obj.maxLoadFactor), table(obj.table.begin(), obj.table.end()) {}
 
 		// Set maximum and minimum load factors
 		void setLoadFactors(double max, double min) {
 			if (min <= 0.0 || min > 1.0 || max <= 0.0 || max > 1.0 || max <= min) {
 				throw InvalidLoadFactors(min, max);
 			}
-			_minLoadFactor = min;
-			_maxLoadFactor = max;
+			minLoadFactor = min;
+			maxLoadFactor = max;
 			if (maxLoadFactorExceeded()) {
-				resize(2 * _capacity);
-			} else if (minLoadFactorExceeded()) {
-				resize((size_t)ceil(_capacity / 2.0));
+				resize(2 * capacity);
+			} else if (minLoadFactorExceeded() && capacity > INITIAL_CPTY) {
+				resize((capacity + 1) / 2);
 			}
 		}
-		double getMaxLoadFactor() const { return _maxLoadFactor; }
-		double getMinLoadFactor() const { return _minLoadFactor; }
+		double getMaxLoadFactor() const { return maxLoadFactor; }
+		double getMinLoadFactor() const { return minLoadFactor; }
 
-		// Check if HashTable contains an item with key 'k'
+		// Check if the hash table contains an item with key k
 		bool contains(const Key& k) const {
-			size_t h = hash(k, _capacity);
+			size_t h = hash(k, capacity), i = 0;
 
-			if (!map[h]) return false;
-			if (map[h]->first == k) return true;
-
-			// Probe through HashTable
-			size_t h2 = (h + 1) % _capacity;
 			do {
-				if (!map[h2]) return false;
-				if (map[h2]->first == k) return true;
-				h2 = (h2 + 1) % _capacity;
-			} while (h2 != h);
+				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k)
+					return true;
+				i++;
+			} while (i < NBHD_SIZE);
 
 			return false;
 		}
 
-		// Search for item with key 'k' and returns its value if found
+		// Search for key-value pair with key k and returns its value if found
 		// If not found, a std::nullopt is returned
 		std::optional<Value> getValue(const Key& k) const {
-			size_t h = hash(k, _capacity);
+			size_t h = hash(k, capacity), i = 0;
 
-			if (!map[h]) return std::nullopt;
-			if (map[h]->first == k) return std::make_optional<Value>(map[h]->second);
-			
-			// Probe through HashTable
-			size_t h2 = (h + 1) % _capacity;
 			do {
-				if (!map[h2]) return std::nullopt;
-				if (map[h2]->first == k) return std::make_optional<Value>(map[h2]->second);
-				h2 = (h2 + 1) % _capacity;
-			} while (h2 != h);
+				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k)
+					return std::make_optional<Value>(table[(h + i) % capacity]->second);
+				i++;
+			} while (i < NBHD_SIZE);
 
 			return std::nullopt;
 		}
 
-		// Search for item with key 'k' and returns it if found
+		// Search for key-value pair with key k and returns it if found
 		// If not found, a std::nullopt is returned
 		std::optional<std::pair<Key, Value>> getItem(const Key& k) const {
-			size_t h = hash(k, _capacity);
+			size_t h = hash(k, capacity), i = 0;
 
-			if (!map[h]) return std::nullopt;
-			if (map[h]->first == k) return std::make_optional<std::pair<Key, Value>>(*map[h]);
-
-			// Probe through HashTable
-			size_t h2 = (h + 1) % _capacity;
 			do {
-				if (!map[h]) return std::nullopt;
-				if (map[h]->first == k) return std::make_optional<std::pair<Key, Value>>(*map[h2]);
-				h2 = (h2 + 1) % _capacity;
-			} while (h2 != h);
+				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k)
+					return std::make_optional<std::pair<Key, Value>>(*table[(h + i) % capacity]);
+				i++;
+			} while (i < NBHD_SIZE);
 
 			return std::nullopt;
 		}
 
-		// Insert new item in the HashTable
+		// Insert new key-value pair in the hash table
 		// Returns true if insertion was effectively done; otherwise, returns false
 		bool insert(const Key& k, const Value& v) {
-			size_t h = hash(k, _capacity);
+			size_t h = hash(k, capacity), i = 0;
 
-			if (!map[h]) {
-				// Insert new item and update size
-				map[h] = std::make_shared<std::pair<Key, Value>>(k, v);
-				_size++;
-				if (maxLoadFactorExceeded()) {
-					// Double capacity if load factor exceeded its upper limit
-					try {
-						resize(2 * _capacity);
-					} catch (ResizeFailed& e) {
-						std::cout << e.what() << "\n";
-						throw;
-					}
-				}
-				return true; // Insertion done successfully
-			} else if (map[h]->first == k) {
-				// Don't insert duplicates
-				return false;
-			}
-
-			// A collision has occurred. Try to insert in another place
-			size_t h2 = (h + 1) % _capacity;
+			// Check if there is any empty bucket within h neighborhood
 			do {
-				if (!map[h2]) {
-					map[h2] = std::make_shared<std::pair<Key, Value>>(k, v);
-					_size++;
+				// If an empty bucket was found in h neighborhood, insert new key-value pair on it
+				if (!table[(h + i) % capacity]) {
+					table[(h + i) % capacity] = std::make_shared<std::pair<Key, Value>>(k, v);
+					size++;
 					if (maxLoadFactorExceeded()) {
 						try {
-							resize(2 * _capacity);
+							resize(2 * capacity);
 						} catch (ResizeFailed& e) {
 							std::cout << e.what() << "\n";
 							throw;
 						}
 					}
-					return true; 
-				} else if (map[h2]->first == k) {
+					return true;
+				} 
+				if (table[(h + i) % capacity]->first == k) {
+					// Don't insert duplicates
 					return false;
 				}
-				h2 = (h2 + 1) % _capacity;
-			} while (h2 != h);
+				i++;
+			} while (i < NBHD_SIZE);
 
+			// There is no empty bucket within h neighborhood
+			// Try to free space by moving buckets in h neighborhood to another location
+			while ((h + i) % capacity != h) {
+				if (!table[(h + i) % capacity]) {
+					size_t j = i;
+					i -= NBHD_SIZE - 1;
+
+					table[(h + j) % capacity] = table[(h + i) % capacity];
+					table[(h + i) % capacity].reset();
+
+					// If empty bucket is within h neighborhood, insert new key-value pair on it
+					if (i < NBHD_SIZE) {
+						table[(h + i) % capacity] = std::make_shared<std::pair<Key, Value>>(k, v);
+						size++;
+						if (maxLoadFactorExceeded()) {
+							try {
+								resize(2 * capacity);
+							} catch (ResizeFailed& e) {
+								std::cout << e.what() << "\n";
+								throw;
+							}
+						}
+						return true;
+					}
+					continue;
+				}
+				i++;
+			}
+			// Failed to insert new key-value pair
 			throw InsertionFailed();
 		}
 
-		// If HashTable contains an item with key 'k', removes it and returns its value;
+		// If the hash table contains an item with key k, removes it and returns its value;
 		// otherwise, returns a std::nullopt
 		std::optional<Value> remove(const Key& k) {
-			size_t h = hash(k, _capacity);
+			size_t h = hash(k, capacity), i = 0;
 
-			if (!map[h]) {
-				return std::nullopt; // Key not found
-			} else if (map[h]->first == k) {
-				// Assign return value with item value and empty slot
-				std::optional<Value> r = map[h]->second;
-				map[h].reset();
-				_size--;
-				if (minLoadFactorExceeded() && _capacity > 1) {
-					// Resize if load factor exceeded its lower limit
-					resize((_capacity + 1) / 2);
-				}
-				return r; // Return removed slot value
-			}
-
-			// Probe through HashTable
-			size_t h2 = (h + 1) & _capacity;
 			do {
-				if (!map[h2]) {
-					return std::nullopt;
-				} else if (map[h2]->first == k) {
-					std::optional<Value> r = map[h2]->second;
-					map[h2].reset();
-					_size--;
-					if (minLoadFactorExceeded() && _capacity > 1) {
-						// Resize if load factor exceeded its lower limit
-						resize((_capacity + 1) / 2);
+				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k) {
+					// Assign return value with item value and empty bucket
+					std::optional<Value> r = table[(h + i) % capacity]->second;
+					table[(h + i) % capacity].reset();
+					size--;
+					// Rehash if needed
+					if (minLoadFactorExceeded() && capacity > INITIAL_CPTY) {
+						resize((capacity + 1) / 2);
 					}
-					return r; 
+					return r; // Return value from removed bucket
 				}
-				h2 = (h2 + 1) % _capacity;
-			} while (h2 != h);
+				i++;
+			} while (i < NBHD_SIZE);
 
 			return std::nullopt;
 		}
 
-		// Get a vector with all the HashTable items
+		// Get a vector with all the hash table items
 		std::vector<Value> getAll() const {
 			std::vector<Value> v;
-			for (Slot_t slot : map) {
-				if (slot) {
-					v.emplace_back(slot->second);
-				}
+			for (Bucket bucket : table) {
+				if (bucket) 
+					v.emplace_back(bucket->second);
 			}
 			return v;
 		}
 
-		// Check if the HashTable is empty
-		bool isEmpty() const { return _size == 0; }
+		// Check if the hash table is empty
+		bool isEmpty() const { return size == 0; }
 
 		// Overload the [] operator for key-based lookup and insertion
 		template <typename T = Value>
 		typename std::enable_if<std::is_default_constructible<T>::value, T&>::type operator[](const Key& key) {
 			if (contains(key))
-				return getValue(key).value();
+				return getBucket(key)->second;
 			insert(key, T()); // Default-construct a value of type T
-			return getValue(key).value();
+			return getBucket(key)->second;
 		}
 
 	private:
-		Map_t map;
+		using Bucket = std::shared_ptr<std::pair<Key, Value>>;
 
-		size_t _capacity; // Total number of slots
-		size_t _size; // Number of occupied slots
+		std::vector<Bucket> table;
+		size_t capacity; // Total number of buckets
+		size_t size; // Number of occupied buckets
+		double maxLoadFactor; // Maximum size/capacity value
+		double minLoadFactor; // Minimum size/capacity value
+		HashFunction customHashFn; // Custom hash function defined by the client
 
-		double _maxLoadFactor; // Maximum size/capacity value
-		double _minLoadFactor; // Minimum size/capacity value
-
-		HashFunction _customHashFn; // Custom hash function defined by the client
-
-		// Check if 'n' is a prime number
+		// Check if n is a prime number
 		bool isPrime(size_t n) const {
 			if (n <= 1) return false;
 			if (n == 2 || n == 3) return true;
@@ -264,11 +248,11 @@ namespace ht {
 			return true;
 		}
 
-		// Calculate hash code for key 'k'
+		// Calculate hash code for key k
 		size_t hash(const Key& k, size_t range) const {
 			// Use the custom hash function if provided; otherwise, use the default hash function
-			auto hashFn = _customHashFn ? _customHashFn : [this, range](const Key& k) -> size_t {
-				// 'bytes' points to the memory representation of 'k'
+			auto hashFn = customHashFn ? customHashFn : [this, range](const Key& k) -> size_t {
+				// "bytes" points to the memory representation of k
 				const char* bytes = reinterpret_cast<const char*>(&k);
 				if (!bytes) {
 					throw std::runtime_error("Invalid key type for default hash function.");
@@ -277,7 +261,7 @@ namespace ht {
 				const size_t p = 257;  // Smallest prime number greater than the alphabet size
 				size_t primePow = p, hashCode = 0;
 
-				// Treat 'k' as a byte string and apply polynomial rolling hash
+				// Treat k as a byte string and apply polynomial rolling hash
 				for (size_t i = 0; i < blockSize; i++) {
 					hashCode = (hashCode + (static_cast<size_t>(*(bytes + i)) + 1) * primePow) % range;
 					primePow = (primePow * p) % range;
@@ -288,46 +272,80 @@ namespace ht {
 			return hashFn(k) % range;
 		}
 
-		// Set HashTable capacity to 'newCapacity'
+		// Resize and rehash hash table
 		void resize(size_t newCapacity) {
-			size_t oldCapacity = _capacity;
-			Map_t temp;
+			size_t oldCapacity = capacity;
+			std::vector<Bucket> temp;
 
-			_capacity = newCapacity;
-			temp.resize(_capacity);
+			capacity = newCapacity;
+			temp.resize(capacity);
 
-			// Transfer non-empty slots from the current map to temp
+			// Transfer non-empty buckets from the current table to temp
 			for (size_t i = 0; i < oldCapacity; i++) {
-				if (map[i]) {
-					size_t h = hash(map[i]->first, _capacity);
+				if (!table[i])
+					continue;
 
-					if (!temp[h]) {
-						temp[h] = map[i];
-						continue;
+				size_t h = hash(table[i]->first, capacity), j = 0;
+
+				// Check if there is any empty bucket within h neighborhood
+				do {
+					// If an empty bucket was found in h neighborhood, insert new key-value pair on it
+					if (!temp[(h + j) % capacity]) {
+						temp[(h + j) % capacity] = table[i];
+						break;
 					}
-					// A collision has occurred. Try to insert in another place
-					// using linear probing
-					size_t h2 = (h + 1) % _capacity;
-					do {
-						if (!temp[h2]) {
-							temp[h2] = map[i];
+					j++;
+				} while (j < NBHD_SIZE);
+
+				if (j < NBHD_SIZE)
+					continue;
+
+				// There is no empty bucket within h neighborhood
+				// Try to free space by moving buckets in h neighborhood to another location
+				while ((h + j) % capacity != h) {
+					if (!temp[(h + j) % capacity]) {
+						size_t k = j;
+						j -= NBHD_SIZE - 1;
+
+						temp[(h + k) % capacity] = temp[(h + j) % capacity];
+						temp[(h + j) % capacity].reset();
+
+						// If an empty bucket was found in h neighborhood, insert new key-value pair on it
+						if (j < NBHD_SIZE) {
+							temp[(h + j) % capacity] = table[i];
 							break;
 						}
-						h2 = (h2 + 1) % _capacity;
-					} while (h2 != h);
-
-					if (h2 == h) {
-						throw ResizeFailed();
+						continue;
 					}
+					i++;
+				}
+
+				// Failed to rehash hash table
+				if ((h + i) % capacity == h) {
+					throw ResizeFailed();
 				}
 			}
-			// Swap the contents of the current map with the temporary map
-			map.swap(temp);
+			// Swap the contents of the current table with the temporary table
+			table.swap(temp);
+		}
+
+		// Search for bucket that points to key-value pair with key k and returns its value if found
+		// If not found, a nullptr is returned
+		Bucket getBucket(const Key& k) const {
+			size_t h = hash(k, capacity), i = 0;
+
+			do {
+				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k)
+					return table[(h + i) % capacity];
+				i++;
+			} while (i < NBHD_SIZE);
+
+			return nullptr;
 		}
 
 		// Check if the load factor has reached its maximum value
-		bool maxLoadFactorExceeded() const { return (static_cast<double>(_size) / _capacity) > _maxLoadFactor; }
+		bool maxLoadFactorExceeded() const { return (static_cast<double>(size) / capacity) > maxLoadFactor; }
 		// Check if the load factor has reached its minimum value
-		bool minLoadFactorExceeded() const { return (static_cast<double>(_size) / _capacity) < _minLoadFactor; }
+		bool minLoadFactorExceeded() const { return (static_cast<double>(size) / capacity) < minLoadFactor; }
 	};
 }
