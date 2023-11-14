@@ -26,7 +26,12 @@ namespace ht {
 	class InvalidLoadFactors : public HashTableException {
 	public:
 		InvalidLoadFactors(double min, double max)
-			: HashTableException(std::format("Invalid load factors: min = {}, max = {}.", min, max)) {}
+			: HashTableException(std::format("Invalid load factors: min = {}, max = {}", min, max)) {}
+	};
+
+	class InvalidKeyType : public HashTableException {
+		InvalidKeyType()
+			: HashTableException("Invalid key type for default hash function (it must be contiguously allocated)") {}
 	};
 
 	class ResizeFailed : public HashTableException {
@@ -85,7 +90,7 @@ namespace ht {
 			size_t h = hash(k, capacity), i = 0;
 
 			do {
-				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k)
+				if (table[(h + i) % capacity] != nullptr && table[(h + i) % capacity]->first == k)
 					return true;
 				i++;
 			} while (i < NBHD_SIZE);
@@ -99,7 +104,7 @@ namespace ht {
 			size_t h = hash(k, capacity), i = 0;
 
 			do {
-				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k)
+				if (table[(h + i) % capacity] != nullptr && table[(h + i) % capacity]->first == k)
 					return std::make_optional<Value>(table[(h + i) % capacity]->second);
 				i++;
 			} while (i < NBHD_SIZE);
@@ -113,7 +118,7 @@ namespace ht {
 			size_t h = hash(k, capacity), i = 0;
 
 			do {
-				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k)
+				if (table[(h + i) % capacity] != nullptr && table[(h + i) % capacity]->first == k)
 					return std::make_optional<std::pair<Key, Value>>(*table[(h + i) % capacity]);
 				i++;
 			} while (i < NBHD_SIZE);
@@ -129,7 +134,7 @@ namespace ht {
 			// Check if there is any empty bucket within h neighborhood
 			do {
 				// If an empty bucket was found in h neighborhood, insert new key-value pair on it
-				if (!table[(h + i) % capacity]) {
+				if (table[(h + i) % capacity] == nullptr) {
 					table[(h + i) % capacity] = std::make_shared<std::pair<Key, Value>>(k, v);
 					size++;
 					if (maxLoadFactorExceeded()) {
@@ -152,7 +157,7 @@ namespace ht {
 			// There is no empty bucket within h neighborhood
 			// Try to free space by moving buckets in h neighborhood to another location
 			while ((h + i) % capacity != h) {
-				if (!table[(h + i) % capacity]) {
+				if (table[(h + i) % capacity] == nullptr) {
 					size_t j = i;
 					i -= NBHD_SIZE - 1;
 
@@ -187,9 +192,10 @@ namespace ht {
 			size_t h = hash(k, capacity), i = 0;
 
 			do {
-				if (table[(h + i) % capacity] && table[(h + i) % capacity]->first == k) {
-					// Assign return value with item value and empty bucket
+				if (table[(h + i) % capacity] != nullptr && table[(h + i) % capacity]->first == k) {
+					// Assign return value with item value
 					std::optional<Value> r = table[(h + i) % capacity]->second;
+					// Empty bucket
 					table[(h + i) % capacity].reset();
 					size--;
 					// Rehash if needed
@@ -220,10 +226,26 @@ namespace ht {
 		// Overload the [] operator for key-based lookup and insertion
 		template <typename T = Value>
 		typename std::enable_if<std::is_default_constructible<T>::value, T&>::type operator[](const Key& key) {
-			if (contains(key))
-				return getBucket(key)->second;
+			Bucket bucket = getBucket(key);
+			if (bucket != nullptr)
+				return bucket->second;
 			insert(key, T()); // Default-construct a value of type T
 			return getBucket(key)->second;
+		}
+
+		void operator=(const HashTable& obj) {
+			capacity = obj.capacity;
+			size = obj.size;
+			maxLoadFactor = obj.maxLoadFactor;
+			minLoadFactor = obj.minLoadFactor;
+			customHashFn = obj.customHashFn;
+
+			table.clear();
+			table.resize(capacity);
+
+			for (size_t i = 0; i < capacity; i++) 
+				if (obj.table[i] != nullptr)
+					table[i] = std::make_shared<std::pair<Key, Value>>(*obj.table[i]);
 		}
 
 	private:
@@ -347,5 +369,12 @@ namespace ht {
 		bool maxLoadFactorExceeded() const { return (static_cast<double>(size) / capacity) > maxLoadFactor; }
 		// Check if the load factor has reached its minimum value
 		bool minLoadFactorExceeded() const { return (static_cast<double>(size) / capacity) < minLoadFactor; }
+
+		// Clear all items stored in the hash table
+		void clearTable() {
+			for (Bucket bucket : table)
+				if (bucket != nullptr)
+					bucket.reset();
+		}
 	};
 }
