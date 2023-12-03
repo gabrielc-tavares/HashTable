@@ -1,4 +1,9 @@
-﻿#pragma once
+﻿/**
+ * @file hash_table.hpp
+ * @brief Hash table implementation using Hopscotch Hashing.
+ */
+
+#pragma once
 
 #include <iostream>
 #include <memory>
@@ -11,46 +16,110 @@
 #include <stdexcept>
 #include <format>
 
+/**
+ * @namespace ht
+ * @brief This namespace contains the implementation of a hash table template class.
+ *
+ * The 'ht' namespace includes the 'HashTable' class, which provides a hash table implementation
+ * using hopscotch hashing. It supports various operations such as insertion, removal, and retrieval
+ * of key-value pairs. The hash table dynamically resizes itself to maintain an optimal load factor.
+ */
 namespace ht {
-	constexpr double MAX_LOAD_FACTOR = 0.75;  // Default maximum load factor 
-	constexpr double MIN_LOAD_FACTOR = 0.25;  // Default minimum load factor
-	constexpr int NBHD_SIZE = 32;  // Size of bucket neighborhoods (referred to as "H" in the original paper on Hopscotch Hashing)
-	constexpr int INITIAL_CPTY = NBHD_SIZE;  // Initial hash table capacity
+	constexpr double MAX_LOAD_FACTOR = 0.75;  ///< Default maximum load factor for the hash table.
+	constexpr double MIN_LOAD_FACTOR = 0.25;  ///< Default minimum load factor for the hash table.
+	constexpr int NBHD_SIZE = 32;  ///< Size of bucket neighborhoods (referred to as "H" in the original paper on Hopscotch Hashing).
+	constexpr int INITIAL_CPTY = NBHD_SIZE;  ///< Initial hash table capacity.
 
+	/**
+	 * @class HashTableException
+	 * @brief Exception class for hash table-related errors.
+	 */
 	class HashTableException : public std::runtime_error {
 	public:
+		/**
+		 * @brief Constructor with an error message.
+		 * @param message The error message.
+		 */
 		HashTableException(const std::string& message) 
 			: std::runtime_error(message) {}
 	};
 
+	/**
+	 * @class InvalidLoadFactors
+	 * @brief Exception class for invalid load factor values.
+	 */
 	class InvalidLoadFactors : public HashTableException {
 	public:
+		/**
+		 * @brief Constructor with the specified range of invalid load factors.
+		 * @param min The minimum load factor.
+		 * @param max The maximum load factor.
+		 */
 		InvalidLoadFactors(double min, double max)
 			: HashTableException(std::format("Invalid load factors: min = {}, max = {}", min, max)) {}
 	};
 
+	/**
+	 * @class InvalidKeyType
+	 * @brief Exception class for usage of invalid key types with default hash function.
+	 */
 	class InvalidKeyType : public HashTableException {
+	public:
+		/**
+		 * @brief Constructor for the invalid key type exception.
+		 */
 		InvalidKeyType()
 			: HashTableException("Invalid key type for default hash function (it must be contiguously allocated)") {}
 	};
 
+	/**
+	 * @ResizeFailed
+	 * @brief Exception class for hash table resizing failures.
+	 */
 	class ResizeFailed : public HashTableException {
 	public:
+		/**
+		 * @brief Constructor for the resizing failure exception.
+		 */
 		ResizeFailed()
 			: HashTableException("Failed to resize hash table") {}
 	};
 
+	/**
+	 * @InsertionFailed
+	 * @brief Exception class for hash table insertion failures.
+	 */
 	class InsertionFailed : public HashTableException {
 	public:
+		/**
+		* @brief Constructor for the insertion failure exception.
+		*/
 		InsertionFailed()
 			: HashTableException("Failed to insert an item in hash table") {}
 	};
 
+	/**
+	 * @class HashTable
+	 * @brief Hash table implementation using Hopscotch Hashing.
+	 * @tparam Key The key type.
+	 * @tparam Value The value type.
+	 */
 	template<typename Key, typename Value>
 	class HashTable {
 	public:
+		/**
+		 * @typedef HashFunction
+		 * @brief Custom hash function interface.
+		 */
 		using HashFunction = std::function<size_t(const Key&)>;  // Custom hash function interface
 
+		/**
+		 * @brief Constructor for the hash table.
+		 * @param _customHashFn Custom hash function.
+		 * @param _minLoadFactor Minimum load factor.
+		 * @param _maxLoadFactor Maximum load factor.
+		 * @param expectedSize Expected initial size of the hash table.
+		 */
 		HashTable(HashFunction _customHashFn = nullptr, double _minLoadFactor = MIN_LOAD_FACTOR, double _maxLoadFactor = MAX_LOAD_FACTOR, size_t expectedSize = INITIAL_CPTY)
 			: size(0), customHashFn(_customHashFn), minLoadFactor(_minLoadFactor), maxLoadFactor(_maxLoadFactor) {
 			if (expectedSize < INITIAL_CPTY) {
@@ -65,11 +134,19 @@ namespace ht {
 			}
 		}
 
-		// Copy constructor
+		/**
+		 * @brief Copy constructor for the HashTable.
+		 * @param obj The HashTable to be copied.
+		 */
 		HashTable(const HashTable<Key, Value>& obj) 
 			: size(obj.size), customHashFn(obj.customHashFn), capacity(obj.capacity), minLoadFactor(obj.minLoadFactor), maxLoadFactor(obj.maxLoadFactor), table(obj.table.begin(), obj.table.end()) {}
 
-		// Set maximum and minimum load factors
+		/**
+		 * @brief Set the maximum and minimum load factors for the HashTable.
+		 * @param max The maximum load factor.
+		 * @param min The minimum load factor.
+		 * @throws InvalidLoadFactors Thrown if the provided load factors are invalid.
+		 */
 		void setLoadFactors(double max, double min) {
 			if (min <= 0.0 || min > 1.0 || max <= 0.0 || max > 1.0 || max <= min) {
 				throw InvalidLoadFactors(min, max);
@@ -82,10 +159,28 @@ namespace ht {
 				resize((capacity + 1) / 2);
 			}
 		}
-		double getMaxLoadFactor() const { return maxLoadFactor; }
-		double getMinLoadFactor() const { return minLoadFactor; }
 
-		// Check if the hash table contains an item with key k
+		/**
+		 * @brief Get the maximum load factor.
+		 * @return The maximum load factor.
+		 */
+		double getMaxLoadFactor() const { 
+			return maxLoadFactor; 
+		}
+
+		/**
+		 * @brief Get the minimum load factor.
+		 * @return The minimum load factor.
+		 */
+		double getMinLoadFactor() const { 
+			return minLoadFactor; 
+		}
+
+		/**
+		 * @brief Check if the HashTable contains an item with key k.
+		 * @param k The key to check.
+		 * @return True if the key is found, false otherwise.
+		 */
 		bool contains(const Key& k) const {
 			size_t h = hash(k, capacity), i = 0;
 
@@ -98,8 +193,11 @@ namespace ht {
 			return false;
 		}
 
-		// Search for key-value pair with key k and returns its value if found
-		// If not found, a std::nullopt is returned
+		/**
+		 * @brief Get the value associated with the key k.
+		 * @param k The key to search for.
+		 * @return The value if found, std::nullopt otherwise.
+		 */
 		std::optional<Value> getValue(const Key& k) const {
 			size_t h = hash(k, capacity), i = 0;
 
@@ -112,8 +210,11 @@ namespace ht {
 			return std::nullopt;
 		}
 
-		// Search for key-value pair with key k and returns it if found
-		// If not found, a std::nullopt is returned
+		/**
+		 * @brief Get the key-value pair associated with the key k.
+		 * @param k The key to search for.
+		 * @return The key-value pair if found, std::nullopt otherwise.
+		 */
 		std::optional<std::pair<Key, Value>> getItem(const Key& k) const {
 			size_t h = hash(k, capacity), i = 0;
 
@@ -126,8 +227,13 @@ namespace ht {
 			return std::nullopt;
 		}
 
-		// Insert new key-value pair in the hash table
-		// Returns true if insertion was effectively done; otherwise, returns false
+		/**
+		 * @brief Insert a new key-value pair into the HashTable.
+		 * @param k The key.
+		 * @param v The value.
+		 * @return True if the insertion was successful, false if the key already exists.
+		 * @throws ResizeFailed Thrown if resizing the table fails.
+		 */
 		bool insert(const Key& k, const Value& v) {
 			size_t h = hash(k, capacity), i = 0;
 
@@ -186,8 +292,11 @@ namespace ht {
 			throw InsertionFailed();
 		}
 
-		// If the hash table contains an item with key k, removes it and returns its value;
-		// otherwise, returns a std::nullopt
+		/**
+		 * @brief Remove the item with key k from the HashTable.
+		 * @param k The key to remove.
+		 * @return The value of the removed item if successful, std::nullopt otherwise.
+		 */
 		std::optional<Value> remove(const Key& k) {
 			size_t h = hash(k, capacity), i = 0;
 
@@ -210,7 +319,10 @@ namespace ht {
 			return std::nullopt;
 		}
 
-		// Get a vector with all the hash table items
+		/**
+		 * @brief Get a vector with all the values in the HashTable.
+		 * @return A vector containing all the values.
+		 */
 		std::vector<Value> getAll() const {
 			std::vector<Value> v;
 			for (Bucket bucket : table) {
@@ -220,10 +332,18 @@ namespace ht {
 			return v;
 		}
 
-		// Check if the hash table is empty
+		/**
+		 * @brief Check if the HashTable is empty.
+		 * @return True if the HashTable is empty, false otherwise.
+		 */
 		bool isEmpty() const { return size == 0; }
 
-		// Overload the [] operator for key-based lookup and insertion
+		/**
+		 * @brief Overload the [] operator for key-based lookup and insertion.
+		 * @tparam T The value type.
+		 * @param key The key for lookup or insertion.
+		 * @return A reference to the value associated with the key.
+		 */
 		template <typename T = Value>
 		typename std::enable_if<std::is_default_constructible<T>::value, T&>::type operator[](const Key& key) {
 			Bucket bucket = getBucket(key);
@@ -233,6 +353,10 @@ namespace ht {
 			return getBucket(key)->second;
 		}
 
+		/**
+		 * @brief Copy assignment operator for the HashTable.
+		 * @param obj The HashTable to be copied.
+		 */
 		void operator=(const HashTable& obj) {
 			capacity = obj.capacity;
 			size = obj.size;
@@ -249,16 +373,23 @@ namespace ht {
 		}
 
 	private:
+		/**
+		 * @brief Alias for a shared pointer to a key-value pair.
+		 */
 		using Bucket = std::shared_ptr<std::pair<Key, Value>>;
 
-		std::vector<Bucket> table;
-		size_t capacity; // Total number of buckets
-		size_t size; // Number of occupied buckets
-		double maxLoadFactor; // Maximum size/capacity value
-		double minLoadFactor; // Minimum size/capacity value
-		HashFunction customHashFn; // Custom hash function defined by the client
+		std::vector<Bucket> table; ///< The underlying table storing the key-value pairs.
+		size_t capacity; ///< Total number of buckets in the hash table.
+		size_t size; ///< Number of occupied buckets in the hash table.
+		double maxLoadFactor; ///< Maximum load factor (size/capacity) for the hash table.
+		double minLoadFactor; ///< Minimum load factor (size/capacity) for the hash table.
+		HashFunction customHashFn; ///< Custom hash function defined by the client.
 
-		// Check if n is a prime number
+		/**
+		 * @brief Check if a given number is a prime.
+		 * @param n The number to check.
+		 * @return True if the number is prime, false otherwise.
+		 */
 		bool isPrime(size_t n) const {
 			if (n <= 1) return false;
 			if (n == 2 || n == 3) return true;
@@ -270,7 +401,12 @@ namespace ht {
 			return true;
 		}
 
-		// Calculate hash code for key k
+		/**
+		 * @brief Calculate the hash code for a key k.
+		 * @param k The key.
+		 * @param range The range for the hash code.
+		 * @return The calculated hash code.
+		 */
 		size_t hash(const Key& k, size_t range) const {
 			// Use the custom hash function if provided; otherwise, use the default hash function
 			auto hashFn = customHashFn ? customHashFn : [this, range](const Key& k) -> size_t {
@@ -294,7 +430,10 @@ namespace ht {
 			return hashFn(k) % range;
 		}
 
-		// Resize and rehash hash table
+		/**
+		 * @brief Resize and rehash the hash table.
+		 * @param newCapacity The new capacity for the hash table.
+		 */
 		void resize(size_t newCapacity) {
 			size_t oldCapacity = capacity;
 			std::vector<Bucket> temp;
@@ -351,8 +490,11 @@ namespace ht {
 			table.swap(temp);
 		}
 
-		// Search for bucket that points to key-value pair with key k and returns its value if found
-		// If not found, a nullptr is returned
+		/**
+		 * @brief Search for the bucket that points to the key-value pair with key k.
+		 * @param k The key to search for.
+		 * @return The bucket if found, nullptr otherwise.
+		 */
 		Bucket getBucket(const Key& k) const {
 			size_t h = hash(k, capacity), i = 0;
 
@@ -365,12 +507,29 @@ namespace ht {
 			return nullptr;
 		}
 
-		// Check if the load factor has reached its maximum value
-		bool maxLoadFactorExceeded() const { return (static_cast<double>(size) / capacity) > maxLoadFactor; }
-		// Check if the load factor has reached its minimum value
-		bool minLoadFactorExceeded() const { return (static_cast<double>(size) / capacity) < minLoadFactor; }
+		/**
+		 * @brief Check if the maximum load factor has been exceeded.
+		 * @return True if the maximum load factor is exceeded, false otherwise.
+		 */
+		bool maxLoadFactorExceeded() const { 
+			return (static_cast<double>(size) / capacity) > maxLoadFactor; 
+		}
 
-		// Clear all items stored in the hash table
+		/**
+		 * @brief Check if the minimum load factor has been exceeded.
+		 * @return True if the minimum load factor is exceeded, false otherwise.
+		 */
+		bool minLoadFactorExceeded() const { 
+			return (static_cast<double>(size) / capacity) < minLoadFactor; 
+		}
+
+		/**
+		 * @brief Clears the HashTable by resetting all buckets to nullptr.
+		 *
+		 * This method iterates through all the buckets in the HashTable
+		 * and resets each bucket to nullptr, effectively clearing the table.
+		 * The size of the HashTable is not modified.
+		 */
 		void clearTable() {
 			for (Bucket bucket : table)
 				if (bucket != nullptr)
